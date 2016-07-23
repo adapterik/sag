@@ -9,6 +9,11 @@
       "name": "Sam Bisbee",
       "email": "sam@sbisbee.com",
       "homepage": "http://www.sbisbee.com/"
+    },
+    {
+      "name": "Erik Pearson",
+      "email": "erik@adaptations.com",
+      "homepage": "http://www.adaptations.com/people/erik/"
     }
   ],
   "require": {

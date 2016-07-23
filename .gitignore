@@ -6,3 +6,4 @@
 *.tar.gz.md5
 *.tar.gz.sha
 .project
+/nbproject
