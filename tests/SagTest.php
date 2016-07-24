@@ -373,6 +373,41 @@ class SagTest extends PHPUnit_Framework_TestCase
     }
   }
 
+  public function test_bulkEmptyArray() {
+    $result = $this->couch->bulk(array());
+
+    $this->assertEquals(201, $result->status);
+    $this->assertTrue(is_array($result->body));
+    $this->assertTrue(empty($result->body));
+  }
+
+  public function test_bulkBatch() {
+    $batchSize = 2;
+    $docs = array(new stdClass(), new stdClass(), new stdClass());
+
+    $result = $this->couch->bulk($docs, false, $batchSize);
+    $this->assertTrue(is_array($result), 'Proper return type');
+    $this->assertEquals($batchSize, sizeof($result), 'Proper # batches');
+  }
+
+  public function test_bulkBatchNonPositive() {
+    $batchSizes = array(0, -1, false);
+
+    foreach($batchSizes as $batchSize) {
+      $docs = array(new stdClass(), new stdClass(), new stdClass());
+      $result = $this->couch->bulk($docs, false, $batchSize);
+
+      $this->assertFalse(is_array($result));
+      $this->assertTrue(is_object($result));
+    }
+  }
+
+  public function test_bulkBatchBadInput() {
+    $this->setExpectedException('SagException');
+
+    $this->couch->bulk(array(), false, new stdClass());
+  }
+
   public function test_replication()
   {
     $newDB = ($GLOBALS['dbReplication']) ? $GLOBALS['dbReplication'] : 'sag_tests_replication';
@@ -444,14 +479,18 @@ class SagTest extends PHPUnit_Framework_TestCase
     $this->assertTrue($this->couch->compact()->body->ok);
   }
 
-  public function test_attachments()
-  {
+  public function test_deprecatedSetAttachment() {
+    $this->setExpectedException('PHPUnit_Framework_Error');
+    $this->couch->setAttachment();
+  }
+
+  public function test_attachments() {
     $docID = 'howdy';
     $name = 'lyrics';
     $data = 'Somebody once told me';
     $ct = 'text/plain';
 
-    $res = $this->couch->setAttachment($name, $data, $ct, $docID);
+    $res = $this->couch->putAttachment($name, $data, $ct, $docID);
 
     // Make sure the new doc was created.
     $this->assertEquals('201', $res->headers->_HTTP->status);
@@ -481,7 +520,7 @@ class SagTest extends PHPUnit_Framework_TestCase
 
     // Try to update the attachment, forcing the ?rev URL param to be sent.
     $data = 'the world was gonna roll me.';
-    $res = $this->couch->setAttachment($name, $data, $ct, $docID, $res->body->_rev);
+    $res = $this->couch->putAttachment($name, $data, $ct, $docID, $res->body->_rev);
 
     // Make sure the new doc was updated.
     $this->assertEquals('201', $res->headers->_HTTP->status);

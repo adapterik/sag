@@ -424,15 +424,31 @@ class Sag {
             $data = json_encode($data);
         }
 
-        if (is_string($path) && !empty($path)) {
-            if ($path[0] === '/') {
-                $path = '/' . urlencode(substr($path, 1));
-            } else {
-                $path = '/' . urlencode($path);
-            }
-        } else if (isset($path)) {
-            throw new SagException('post() needs a string for a path.');
-        }
+    return $this->procPacket('POST', "/{$this->db}{$path}", $data);
+  }
+
+  /**
+   * Bulk pushes documents to the database.
+   * 
+   * This function does not leverage the caching mechanism you specify with
+   * setCache().
+   *
+   * @param array $docs An array of the documents you want to be pushed; they
+   * can be JSON strings, objects, or arrays.
+   * @param bool $allOrNothing Whether to treat the transactions as "all or
+   * nothing" or not. Defaults to false.
+   * @param int $batchSize If set to a positive integer, the $docs array will
+   * be split into batches of max size $batchSize and one bulk HTTP request
+   * will be done per batch. The return value will be an array of responses. If
+   * set to a non-positive value then the entire $docs array will be sent in
+   * one HTTP request. Defaults to 0.
+   *
+   * @return mixed
+   */
+  public function bulk($docs, $allOrNothing = false, $batchSize = 0) {
+    if(!$this->db) {
+      throw new SagException('No database specified');
+    }
 
         return $this->procPacket('POST', "/{$this->db}{$path}", $data);
     }
@@ -459,16 +475,53 @@ class Sag {
             throw new SagException('bulk() expects an array for its first argument');
         }
 
-        if (!is_bool($allOrNothing)) {
-            throw new SagException('bulk() expects a boolean for its second argument');
-        }
+    if(!is_int($batchSize) && !empty($batchSize)) {
+      throw new SagException('bulk() expects an int or false value for its third argument');
+    }
 
-        $data = new stdClass();
+    $bulkURL = "/{$this->db}/_bulk_docs";
+    $data = new stdClass();
 
-        //Only send all_or_nothing if it's non-default (true), saving bandwidth.
-        if ($allOrNothing) {
-            $data->all_or_nothing = $allOrNothing;
-        }
+    //Only send all_or_nothing if it's non-default (true)
+    if($allOrNothing) {
+      $data->all_or_nothing = $allOrNothing;
+    }
+
+    if($batchSize > 0) {
+      $responses = array();
+      $batches = array_chunk($docs, $batchSize);
+
+      foreach($batches as $batch) {
+        $data->docs = $batch;
+        $resp = $this->procPacket('POST', $bulkURL, json_encode($data));
+        $responses[] = $resp;
+        unset($resp);
+      }
+
+      return $responses;
+    }
+
+    $data->docs = $docs;
+    return $this->procPacket('POST', $bulkURL, json_encode($data));
+  }
+
+  /**
+   * COPY's the document.
+   *
+   * If you are using a SagCache and are copying to an existing destination,
+   * then the result will be cached (ie., what's copied to the /$destID URL).
+   *
+   * @param string The _id of the document you're copying.
+   * @param string The _id of the document you're copying to.
+   * @param string The _rev of the document you're copying to. Defaults to
+   * null.
+   *
+   * @return mixed
+   */
+  public function copy($srcID, $dstID, $dstRev = null) {
+    if(!$this->db) {
+      throw new SagException('No database specified');
+    }
 
         $data->docs = $docs;
 
@@ -738,10 +791,41 @@ class Sag {
             throw new SagException('createTarget needs to be a boolean.');
         }
 
-        if (isset($filter)) {
-            if (!is_string($filter)) {
-                throw new SagException('filter must be the name of a design doc\'s filter function: ddoc/filter');
-            }
+    return $this->procPacket('POST', '/_replicate', json_encode($data));
+  }
+
+  /**
+   * Starts a compaction job on the database you selected, or optionally one of
+   * its views.
+   *
+   * @param string $viewName The database's view that you want to compact,
+   * instead of the whole database.
+   *
+   * @return mixed
+   */
+  public function compact($viewName = null) {
+    return $this->procPacket('POST', "/{$this->db}/_compact".((empty($viewName)) ? '' : "/$viewName"));
+  }
+
+  /**
+   * Create or update attachments on documents by passing in a serialized
+   * version of your attachment (a string).
+   *
+   * @param string $name The attachment's name.
+   * @param string $data The attachment's data, in string representation. Ie.,
+   * you need to serialize your attachment.
+   * @param string $contentType The proper Content-Type for your attachment.
+   * @param string $docID The _id of the document that the attachment
+   * belongs to.
+   * @param string $rev optional The _rev of the document that the attachment
+   * belongs to. Leave blank if you are creating a new document.
+   *
+   * @return mixed
+   */
+  public function putAttachment($name, $data, $contentType, $docID, $rev = null) {
+    if(empty($docID)) {
+      throw new SagException('You need to provide a document ID.');
+    }
 
             if (isset($filterQueryParams) && !is_object($filterQueryParams) && !is_array($filterQueryParams)) {
                 throw new SagException('filterQueryParams needs to be an object or an array');
@@ -764,8 +848,57 @@ class Sag {
             $data->create_target = true;
         }
 
-        if ($filter) {
-            $data->filter = $filter;
+    return $this->procPacket('PUT', "/{$this->db}/{$docID}/{$name}".(($rev) ? "?rev=".urlencode($rev) : ""), $data, array("Content-Type" => $contentType));
+  }
+
+  /**
+   * Deprecated function. Please uset putAttachment() instead.
+   */
+  public function setAttachment() {
+    trigger_error('setAttachment() is deprecated. Please use putAttachment() instead.', E_USER_DEPRECATED);
+  }
+
+  /**
+   * Sets how long Sag should wait to establish a connection to CouchDB.
+   *
+   * @param int $seconds
+   * @return Sag Returns $this.
+   */
+  public function setOpenTimeout($seconds) {
+    //the adapter will take care of the validation for us
+    $this->httpAdapter->setOpenTimeout($seconds);
+
+    return $this;
+  }
+
+  /**
+   * How long Sag should wait to execute a request with CouchDB. If not set,
+   * then either default_socket_timeout from your php.ini or cURL's defaults
+   * are used depending on which adapter you're using.
+   *
+   * Use setOpenTimeout() to set the timeout on opening the socket.
+   *
+   * @param int $seconds The seconds part of the timeout.
+   * @param int $microseconds optional The microseconds part of the timeout.
+   * @return Sag Returns $this.
+   */
+  public function setRWTimeout($seconds, $microseconds = 0) {
+    $this->httpAdapter->setRWTimeout($seconds, $microseconds);
+
+    return $this;
+  }
+
+  /*
+   * Pass an implementation of the SagCache, such as SagFileCache, that will be
+   * used when retrieving objects. It is taken and stored as a reference. 
+   *
+   * @param SagCache An implementation of SagCache (ex., SagFileCache).
+   * @return Sag Returns $this.
+   */
+  public function setCache(&$cacheImpl) {
+    if(!($cacheImpl instanceof SagCache)) {
+      throw new SagException('That is not a valid cache.');
+    }
 
             if ($filterQueryParams) {
                 $data->query_params = $filterQueryParams;
