@@ -368,7 +368,6 @@ class Sag {
         }
 
         $toSend = (is_string($data)) ? $data : json_encode($data);
-        $id = urlencode($id);
 
         $url = "/{$this->db}/$id";
         $response = $this->procPacket('PUT', $url, $toSend);
@@ -424,38 +423,18 @@ class Sag {
             $data = json_encode($data);
         }
 
-    return $this->procPacket('POST', "/{$this->db}{$path}", $data);
-  }
-
-  /**
-   * Bulk pushes documents to the database.
-   * 
-   * This function does not leverage the caching mechanism you specify with
-   * setCache().
-   *
-   * @param array $docs An array of the documents you want to be pushed; they
-   * can be JSON strings, objects, or arrays.
-   * @param bool $allOrNothing Whether to treat the transactions as "all or
-   * nothing" or not. Defaults to false.
-   * @param int $batchSize If set to a positive integer, the $docs array will
-   * be split into batches of max size $batchSize and one bulk HTTP request
-   * will be done per batch. The return value will be an array of responses. If
-   * set to a non-positive value then the entire $docs array will be sent in
-   * one HTTP request. Defaults to 0.
-   *
-   * @return mixed
-   */
-  public function bulk($docs, $allOrNothing = false, $batchSize = 0) {
-    if(!$this->db) {
-      throw new SagException('No database specified');
-    }
+        if (is_string($path) && !empty($path)) {
+            $path = ((substr($path, 0, 1) != '/') ? '/' : '') . $path;
+        } else if (isset($path)) {
+            throw new SagException('post() needs a string for a path.');
+        }
 
         return $this->procPacket('POST', "/{$this->db}{$path}", $data);
     }
 
     /**
      * Bulk pushes documents to the database.
-     *
+     * 
      * This function does not leverage the caching mechanism you specify with
      * setCache().
      *
@@ -463,10 +442,15 @@ class Sag {
      * can be JSON strings, objects, or arrays.
      * @param bool $allOrNothing Whether to treat the transactions as "all or
      * nothing" or not. Defaults to false.
+     * @param int $batchSize If set to a positive integer, the $docs array will
+     * be split into batches of max size $batchSize and one bulk HTTP request
+     * will be done per batch. The return value will be an array of responses. If
+     * set to a non-positive value then the entire $docs array will be sent in
+     * one HTTP request. Defaults to 0.
      *
      * @return mixed
      */
-    public function bulk($docs, $allOrNothing = false) {
+    public function bulk($docs, $allOrNothing = false, $batchSize = 0) {
         if (!$this->db) {
             throw new SagException('No database specified');
         }
@@ -475,57 +459,38 @@ class Sag {
             throw new SagException('bulk() expects an array for its first argument');
         }
 
-    if(!is_int($batchSize) && !empty($batchSize)) {
-      throw new SagException('bulk() expects an int or false value for its third argument');
-    }
+        if (!is_bool($allOrNothing)) {
+            throw new SagException('bulk() expects a boolean for its second argument');
+        }
 
-    $bulkURL = "/{$this->db}/_bulk_docs";
-    $data = new stdClass();
+        if (!is_int($batchSize) && !empty($batchSize)) {
+            throw new SagException('bulk() expects an int or false value for its third argument');
+        }
 
-    //Only send all_or_nothing if it's non-default (true)
-    if($allOrNothing) {
-      $data->all_or_nothing = $allOrNothing;
-    }
+        $bulkURL = "/{$this->db}/_bulk_docs";
+        $data = new stdClass();
 
-    if($batchSize > 0) {
-      $responses = array();
-      $batches = array_chunk($docs, $batchSize);
+        //Only send all_or_nothing if it's non-default (true)
+        if ($allOrNothing) {
+            $data->all_or_nothing = $allOrNothing;
+        }
 
-      foreach($batches as $batch) {
-        $data->docs = $batch;
-        $resp = $this->procPacket('POST', $bulkURL, json_encode($data));
-        $responses[] = $resp;
-        unset($resp);
-      }
+        if ($batchSize > 0) {
+            $responses = array();
+            $batches = array_chunk($docs, $batchSize);
 
-      return $responses;
-    }
+            foreach ($batches as $batch) {
+                $data->docs = $batch;
+                $resp = $this->procPacket('POST', $bulkURL, json_encode($data));
+                $responses[] = $resp;
+                unset($resp);
+            }
 
-    $data->docs = $docs;
-    return $this->procPacket('POST', $bulkURL, json_encode($data));
-  }
-
-  /**
-   * COPY's the document.
-   *
-   * If you are using a SagCache and are copying to an existing destination,
-   * then the result will be cached (ie., what's copied to the /$destID URL).
-   *
-   * @param string The _id of the document you're copying.
-   * @param string The _id of the document you're copying to.
-   * @param string The _rev of the document you're copying to. Defaults to
-   * null.
-   *
-   * @return mixed
-   */
-  public function copy($srcID, $dstID, $dstRev = null) {
-    if(!$this->db) {
-      throw new SagException('No database specified');
-    }
+            return $responses;
+        }
 
         $data->docs = $docs;
-
-        return $this->procPacket("POST", "/{$this->db}/_bulk_docs", json_encode($data));
+        return $this->procPacket('POST', $bulkURL, json_encode($data));
     }
 
     /**
@@ -562,7 +527,6 @@ class Sag {
             "Destination" => "$dstID" . (($dstRev) ? "?rev=$dstRev" : "")
         );
 
-        $srcID = urlencode($srcID);
         $response = $this->procPacket('COPY', "/{$this->db}/$srcID", null, $headers);
 
         return $response;
@@ -626,12 +590,10 @@ class Sag {
      * you're trying to get.
      * @param bool $descending Whether to sort the results in descending order or
      * not.
-     * @param int $skip Skip this number of records before starting to return the
-     * results. Defaults to 0.
      *
      * @return mixed
      */
-    public function getAllDocs($incDocs = false, $limit = null, $startKey = null, $endKey = null, $keys = null, $descending = false, $skip = 0) {
+    public function getAllDocs($incDocs = false, $limit = null, $startKey = null, $endKey = null, $keys = null, $descending = false) {
         if (!$this->db) {
             throw new SagException('No database specified.');
         }
@@ -659,7 +621,7 @@ class Sag {
                 throw new SagException('getAllDocs() expected a string for endkey.');
             }
 
-            $qry[] = 'endkey=' . urlencode($endKey);
+            $qry[] = 'endkey=' . $endKey;
         }
 
         if (isset($limit)) {
@@ -676,14 +638,6 @@ class Sag {
             }
 
             $qry[] = "descending=true";
-        }
-
-        if (isset($skip)) {
-            if (!is_int($skip) || $skip < 0) {
-                throw new SagException('getAllDocs() expected a non-negative integer for skip');
-            }
-
-            $qry[] = 'skip=' . urlencode($skip);
         }
 
         $qry = '?' . implode('&', $qry);
@@ -791,41 +745,10 @@ class Sag {
             throw new SagException('createTarget needs to be a boolean.');
         }
 
-    return $this->procPacket('POST', '/_replicate', json_encode($data));
-  }
-
-  /**
-   * Starts a compaction job on the database you selected, or optionally one of
-   * its views.
-   *
-   * @param string $viewName The database's view that you want to compact,
-   * instead of the whole database.
-   *
-   * @return mixed
-   */
-  public function compact($viewName = null) {
-    return $this->procPacket('POST', "/{$this->db}/_compact".((empty($viewName)) ? '' : "/$viewName"));
-  }
-
-  /**
-   * Create or update attachments on documents by passing in a serialized
-   * version of your attachment (a string).
-   *
-   * @param string $name The attachment's name.
-   * @param string $data The attachment's data, in string representation. Ie.,
-   * you need to serialize your attachment.
-   * @param string $contentType The proper Content-Type for your attachment.
-   * @param string $docID The _id of the document that the attachment
-   * belongs to.
-   * @param string $rev optional The _rev of the document that the attachment
-   * belongs to. Leave blank if you are creating a new document.
-   *
-   * @return mixed
-   */
-  public function putAttachment($name, $data, $contentType, $docID, $rev = null) {
-    if(empty($docID)) {
-      throw new SagException('You need to provide a document ID.');
-    }
+        if (isset($filter)) {
+            if (!is_string($filter)) {
+                throw new SagException('filter must be the name of a design doc\'s filter function: ddoc/filter');
+            }
 
             if (isset($filterQueryParams) && !is_object($filterQueryParams) && !is_array($filterQueryParams)) {
                 throw new SagException('filterQueryParams needs to be an object or an array');
@@ -848,60 +771,11 @@ class Sag {
             $data->create_target = true;
         }
 
-    return $this->procPacket('PUT', "/{$this->db}/{$docID}/{$name}".(($rev) ? "?rev=".urlencode($rev) : ""), $data, array("Content-Type" => $contentType));
-  }
-
-  /**
-   * Deprecated function. Please uset putAttachment() instead.
-   */
-  public function setAttachment() {
-    trigger_error('setAttachment() is deprecated. Please use putAttachment() instead.', E_USER_DEPRECATED);
-  }
-
-  /**
-   * Sets how long Sag should wait to establish a connection to CouchDB.
-   *
-   * @param int $seconds
-   * @return Sag Returns $this.
-   */
-  public function setOpenTimeout($seconds) {
-    //the adapter will take care of the validation for us
-    $this->httpAdapter->setOpenTimeout($seconds);
-
-    return $this;
-  }
-
-  /**
-   * How long Sag should wait to execute a request with CouchDB. If not set,
-   * then either default_socket_timeout from your php.ini or cURL's defaults
-   * are used depending on which adapter you're using.
-   *
-   * Use setOpenTimeout() to set the timeout on opening the socket.
-   *
-   * @param int $seconds The seconds part of the timeout.
-   * @param int $microseconds optional The microseconds part of the timeout.
-   * @return Sag Returns $this.
-   */
-  public function setRWTimeout($seconds, $microseconds = 0) {
-    $this->httpAdapter->setRWTimeout($seconds, $microseconds);
-
-    return $this;
-  }
-
-  /*
-   * Pass an implementation of the SagCache, such as SagFileCache, that will be
-   * used when retrieving objects. It is taken and stored as a reference. 
-   *
-   * @param SagCache An implementation of SagCache (ex., SagFileCache).
-   * @return Sag Returns $this.
-   */
-  public function setCache(&$cacheImpl) {
-    if(!($cacheImpl instanceof SagCache)) {
-      throw new SagException('That is not a valid cache.');
-    }
+        if ($filter) {
+            $data->filter = $filter;
 
             if ($filterQueryParams) {
-                $data->query_params = $filterQueryParams;
+                $data->filterQueryParams = $filterQueryParams;
             }
         }
 
@@ -936,7 +810,7 @@ class Sag {
      *
      * @return mixed
      */
-    public function setAttachment($name, $data, $contentType, $docID, $rev = null) {
+    public function putAttachment($name, $data, $contentType, $docID, $rev = null) {
         if (empty($docID)) {
             throw new SagException('You need to provide a document ID.');
         }
@@ -958,6 +832,13 @@ class Sag {
         }
 
         return $this->procPacket('PUT', "/{$this->db}/{$docID}/{$name}" . (($rev) ? "?rev=" . urlencode($rev) : ""), $data, array("Content-Type" => $contentType));
+    }
+
+    /**
+     * Deprecated function. Please uset putAttachment() instead.
+     */
+    public function setAttachment() {
+        trigger_error('setAttachment() is deprecated. Please use putAttachment() instead.', E_USER_DEPRECATED);
     }
 
     /**
@@ -992,7 +873,7 @@ class Sag {
 
     /*
      * Pass an implementation of the SagCache, such as SagFileCache, that will be
-     * used when retrieving objects. It is taken and stored as a reference.
+     * used when retrieving objects. It is taken and stored as a reference. 
      *
      * @param SagCache An implementation of SagCache (ex., SagFileCache).
      * @return Sag Returns $this.
@@ -1009,7 +890,7 @@ class Sag {
     }
 
     /**
-     * Returns the cache object that's currently being used.
+     * Returns the cache object that's currently being used. 
      *
      * @return SagCache
      */
@@ -1209,6 +1090,9 @@ class Sag {
         if (strtolower($headers['Expect']) === '100-continue') {
             throw new SagException('Sag does not support HTTP/1.1\'s Continue.');
         }
+
+        // Do some string replacing for HTTP sanity.
+        $url = str_replace(array(" ", "\""), array('%20', '%22'), $url);
 
         // Build the request packet.
         $headers["Host"] = "{$this->host}:{$this->port}";
